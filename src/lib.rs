@@ -1,5 +1,4 @@
 
-/// Enumerates the various formats supported by the crate.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Format {
     #[cfg(feature = "flac")]
@@ -11,9 +10,6 @@ pub enum Format {
 }
 
 impl Format {
-    /// Read a `Format` from the given `extension`.
-    ///
-    /// This function expects that the `extension` is lowercase ASCII, e.g "wav" or "ogg".
     pub fn from_extension(extension: &str) -> Option<Self> {
         match extension {
             #[cfg(feature = "flac")]
@@ -28,7 +24,6 @@ impl Format {
         }
     }
 
-    /// Return the most commonly used file extension associated with the `Format`.
     pub fn extension(self) -> &'static str {
         match self {
             #[cfg(feature = "flac")]
@@ -51,7 +46,6 @@ use hound;
 #[cfg(feature = "ogg_vorbis")]
 use lewton;
 
-/// Types to which read samples may be converted via the `Reader::samples` method.
 pub trait Sample:
     dasp_sample::Sample
     + dasp_sample::FromSample<i8>
@@ -72,7 +66,6 @@ impl<T> Sample for T where
 {
 }
 
-/// Returned by the `read` function, enumerates the various supported readers.
 pub enum Reader<R>
 where
     R: std::io::Read + std::io::Seek,
@@ -85,8 +78,6 @@ where
     Wav(hound::WavReader<R>),
 }
 
-/// An iterator that reads samples from the underlying reader, converts them to the sample type `S`
-/// if not already in that format and yields them.
 pub struct Samples<'a, R, S>
 where
     R: 'a + std::io::Read + std::io::Seek,
@@ -135,8 +126,6 @@ enum WavSamples<'a, R: 'a> {
     F32(hound::WavSamples<'a, R, f32>),
 }
 
-/// An iterator that reads samples from the underlying reader, converts them to frames of type `F`
-/// and yields them.
 pub struct Frames<'a, R, F>
 where
     R: 'a + std::io::Read + std::io::Seek,
@@ -146,10 +135,8 @@ where
     frame: std::marker::PhantomData<F>,
 }
 
-/// An alias for the buffered, file `Reader` type returned from the `open` function.
 pub type BufFileReader = Reader<std::io::BufReader<std::fs::File>>;
 
-/// A description of the audio format that was read from file.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Description {
     format: Format,
@@ -157,7 +144,6 @@ pub struct Description {
     sample_rate: u32,
 }
 
-/// Errors that might be returned from the `Reader::new` function.
 #[derive(Debug)]
 pub enum ReadError {
     Io(std::io::Error),
@@ -165,7 +151,6 @@ pub enum ReadError {
     UnsupportedFormat,
 }
 
-/// Format-specific errors that might occur when opening or reading from an audio file.
 #[derive(Debug)]
 pub enum FormatError {
     #[cfg(feature = "flac")]
@@ -184,9 +169,6 @@ pub enum FormatError {
     Alac(()),
 }
 
-/// Attempts to open an audio `Reader` from the file at the specified `Path`.
-///
-/// The format is determined from the path's file extension.
 pub fn open<P>(file_path: P) -> Result<BufFileReader, ReadError>
 where
     P: AsRef<std::path::Path>,
@@ -195,34 +177,20 @@ where
 }
 
 impl Description {
-    /// The format from which the audio will be read.
     pub fn format(&self) -> Format {
         self.format
     }
 
-    /// The number of channels of audio.
-    ///
-    /// E.g. For audio stored in stereo this should return `2`. Mono audio will return `1`.
     pub fn channel_count(&self) -> u32 {
         self.channel_count
     }
 
-    /// The rate in Hertz at which each channel of the stored audio is sampled.
-    ///
-    /// E.g. A `sample_rate` of 44_100 indicates that the audio is sampled 44_100 times per second
-    /// per channel.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 }
 
 impl BufFileReader {
-    /// Attempts to open an audio `Reader` from the file at the specified `Path`.
-    ///
-    /// This function is a convenience wrapper around the `Reader::new` function.
-    ///
-    /// This function pays no attention to the `file_path`'s extension and instead attempts to read
-    /// a supported `Format` via the file header.
     pub fn open<P>(file_path: P) -> Result<Self, ReadError>
     where
         P: AsRef<std::path::Path>,
@@ -238,11 +206,6 @@ impl<R> Reader<R>
 where
     R: std::io::Read + std::io::Seek,
 {
-    /// Attempts to read the format of the audio read by the given `reader` and returns the associated
-    /// `Reader` variant.
-    ///
-    /// The format is determined by attempting to construct each specific format reader until one
-    /// is successful.
     pub fn new(mut reader: R) -> Result<Self, ReadError> {
         #[cfg(feature = "wav")]
         {
@@ -291,7 +254,6 @@ where
         Err(ReadError::UnsupportedFormat)
     }
 
-    /// The format from which the audio will be read.
     pub fn format(&self) -> Format {
         match *self {
             #[cfg(feature = "flac")]
@@ -303,7 +265,6 @@ where
         }
     }
 
-    /// A basic description of the audio being read.
     pub fn description(&self) -> Description {
         match *self {
             #[cfg(feature = "flac")]
@@ -335,10 +296,6 @@ where
         }
     }
 
-    /// Produce an iterator that reads samples from the underlying reader, converts them to the
-    /// sample type `S` if not already in that format and yields them.
-    ///
-    /// When reading from multiple channels, samples are **interleaved**.
     pub fn samples<S>(&mut self) -> Samples<'_, R, S>
     where
         S: Sample,
@@ -388,13 +345,6 @@ where
         }
     }
 
-    /// Produce an iterator that yields read frames from the underlying `Reader`.
-    ///
-    /// This method currently expects that the frame type `F` has the same number of channels as
-    /// stored in the underlying audio format.
-    ///
-    /// TODO: Should consider changing this behaviour to check the audio file's actual number of
-    /// channels and automatically convert to `F`'s number of channels while reading.
     pub fn frames<F>(&mut self) -> Frames<'_, R, F>
     where
         F: dasp_frame::Frame,
