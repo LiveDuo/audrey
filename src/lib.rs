@@ -86,8 +86,6 @@ where
     sample: std::marker::PhantomData<S>,
 }
 
-// The inner part of the `Samples` iterator, specific to the format of the `Reader` used to produce
-// the `Samples`.
 enum FormatSamples<'a, R>
 where
     R: 'a + std::io::Read + std::io::Seek,
@@ -116,7 +114,6 @@ where
 
 }
 
-// The variants of hound's supported sample bit depths.
 #[cfg(feature = "wav")]
 enum WavSamples<'a, R: 'a> {
     I8(hound::WavSamples<'a, R, i8>),
@@ -387,14 +384,12 @@ where
                 ref mut index,
                 ref mut buffer,
             } => loop {
-                // Convert and return any pending samples.
                 if *index < buffer.len() {
                     let sample = dasp_sample::Sample::to_sample(buffer[*index]);
                     *index += 1;
                     return Some(Ok(sample));
                 }
 
-                // If there are no samples left in the buffer, refill the buffer.
                 match reader.read_dec_packet_itl() {
                     Ok(Some(packet)) => {
                         let _ = std::mem::replace(buffer, packet);
@@ -613,11 +608,8 @@ mod tests {
             reader.samples::<i16>().map(Result::unwrap).count()
         }
 
-        // The original sample.
         let num_wav_samples = read_samples(WAV);
-        // FLAC should be lossless.
         assert_eq!(num_wav_samples, read_samples(FLAC));
-        // Ogg Vorbis is lossy.
         read_samples(OGG_VORBIS);
     }
 
