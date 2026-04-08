@@ -37,6 +37,11 @@ impl Format {
 }
 
 
+use std::io::{BufReader, Error, Read, Seek};
+use std::marker::PhantomData;
+use std::path::Path;
+use std::fs::File;
+
 #[cfg(feature = "caf")]
 use caf::{self, CafError};
 #[cfg(feature = "flac")]
@@ -66,10 +71,7 @@ impl<T> Sample for T where
 {
 }
 
-pub enum Reader<R>
-where
-    R: std::io::Read + std::io::Seek,
-{
+pub enum Reader<R> where R: Read + Seek, {
     #[cfg(feature = "flac")]
     Flac(claxon::FlacReader<R>),
     #[cfg(feature = "ogg_vorbis")]
@@ -78,18 +80,12 @@ where
     Wav(hound::WavReader<R>),
 }
 
-pub struct Samples<'a, R, S>
-where
-    R: 'a + std::io::Read + std::io::Seek,
-{
+pub struct Samples<'a, R, S> where R: 'a + Read + Seek, {
     format: FormatSamples<'a, R>,
-    sample: std::marker::PhantomData<S>,
+    sample: PhantomData<S>,
 }
 
-enum FormatSamples<'a, R>
-where
-    R: 'a + std::io::Read + std::io::Seek,
-{
+enum FormatSamples<'a, R> where R: 'a + Read + Seek, {
     #[cfg(feature = "flac")]
     Flac {
         sample_bits: u32,
@@ -123,16 +119,12 @@ enum WavSamples<'a, R: 'a> {
     F32(hound::WavSamples<'a, R, f32>),
 }
 
-pub struct Frames<'a, R, F>
-where
-    R: 'a + std::io::Read + std::io::Seek,
-    F: dasp_frame::Frame,
-{
+pub struct Frames<'a, R, F> where R: 'a + Read + Seek, F: dasp_frame::Frame, {
     samples: Samples<'a, R, F::Sample>,
-    frame: std::marker::PhantomData<F>,
+    frame: PhantomData<F>,
 }
 
-pub type BufFileReader = Reader<std::io::BufReader<std::fs::File>>;
+pub type BufFileReader = Reader<BufReader<File>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Description {
@@ -143,7 +135,7 @@ pub struct Description {
 
 #[derive(Debug)]
 pub enum ReadError {
-    Io(std::io::Error),
+    Io(Error),
     Reader(FormatError),
     UnsupportedFormat,
 }
@@ -166,10 +158,7 @@ pub enum FormatError {
     Alac(()),
 }
 
-pub fn open<P>(file_path: P) -> Result<BufFileReader, ReadError>
-where
-    P: AsRef<std::path::Path>,
-{
+pub fn open<P>(file_path: P) -> Result<BufFileReader, ReadError> where P: AsRef<Path>, {
     BufFileReader::open(file_path)
 }
 
@@ -190,28 +179,27 @@ impl Description {
 impl BufFileReader {
     pub fn open<P>(file_path: P) -> Result<Self, ReadError>
     where
-        P: AsRef<std::path::Path>,
+        P: AsRef<Path>,
     {
         let path = file_path.as_ref();
-        let file = std::fs::File::open(path)?;
-        let reader = std::io::BufReader::new(file);
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
         Reader::new(reader)
     }
 }
 
-impl<R> Reader<R>
-where
-    R: std::io::Read + std::io::Seek,
-{
+impl<R> Reader<R> where R: Read + Seek, {
     pub fn new(mut reader: R) -> Result<Self, ReadError> {
         #[cfg(feature = "wav")]
         {
+            use std::io::SeekFrom;
+
             let is_wav = match hound::WavReader::new(&mut reader) {
                 Err(hound::Error::FormatError(_)) => false,
                 Err(err) => return Err(err.into()),
                 Ok(_) => true,
             };
-            reader.seek(std::io::SeekFrom::Start(0))?;
+            reader.seek(SeekFrom::Start(0))?;
             if is_wav {
                 return Ok(Reader::Wav(hound::WavReader::new(reader)?));
             }
@@ -219,12 +207,14 @@ where
 
         #[cfg(feature = "flac")]
         {
+            use std::io::SeekFrom;
+
             let is_flac = match claxon::FlacReader::new(&mut reader) {
                 Err(claxon::Error::FormatError(_)) => false,
                 Err(err) => return Err(err.into()),
                 Ok(_) => true,
             };
-            reader.seek(std::io::SeekFrom::Start(0))?;
+            reader.seek(SeekFrom::Start(0))?;
             if is_flac {
                 return Ok(Reader::Flac(claxon::FlacReader::new(reader)?));
             }
@@ -232,6 +222,8 @@ where
 
         #[cfg(feature = "ogg_vorbis")]
         {
+            use std::io::SeekFrom;
+
             let is_ogg_vorbis = match lewton::inside_ogg::OggStreamReader::new(&mut reader) {
                 Err(lewton::VorbisError::OggError(_))
                 | Err(lewton::VorbisError::BadHeader(
@@ -240,7 +232,7 @@ where
                 Err(err) => return Err(err.into()),
                 Ok(_) => true,
             };
-            reader.seek(std::io::SeekFrom::Start(0))?;
+            reader.seek(SeekFrom::Start(0))?;
             if is_ogg_vorbis {
                 return Ok(Reader::OggVorbis(lewton::inside_ogg::OggStreamReader::new(
                     reader,
@@ -293,10 +285,7 @@ where
         }
     }
 
-    pub fn samples<S>(&mut self) -> Samples<'_, R, S>
-    where
-        S: Sample,
-    {
+    pub fn samples<S>(&mut self) -> Samples<'_, R, S> where S: Sample, {
         let format = match *self {
             #[cfg(feature = "flac")]
             Reader::Flac(ref mut reader) => {
@@ -304,10 +293,7 @@ where
                 if sample_bits > 32 {
                     FormatSamples::FlacUnsupportedSampleBits(sample_bits)
                 } else {
-                    FormatSamples::Flac {
-                        sample_bits,
-                        flac_samples: reader.samples(),
-                    }
+                    FormatSamples::Flac { sample_bits, flac_samples: reader.samples(), }
                 }
             }
 
@@ -336,30 +322,18 @@ where
             }
         };
 
-        Samples {
-            format,
-            sample: std::marker::PhantomData,
-        }
+        Samples { format, sample: PhantomData, }
     }
 
-    pub fn frames<F>(&mut self) -> Frames<'_, R, F>
-    where
-        F: dasp_frame::Frame,
-        F::Sample: Sample,
-    {
-        Frames {
-            samples: self.samples(),
-            frame: std::marker::PhantomData,
-        }
+    pub fn frames<F>(&mut self) -> Frames<'_, R, F> where F: dasp_frame::Frame, F::Sample: Sample, {
+        Frames { samples: self.samples(), frame: PhantomData, }
     }
 }
 
-impl<'a, R, S> Iterator for Samples<'a, R, S>
-where
-    R: std::io::Read + std::io::Seek,
-    S: Sample,
-{
+impl<'a, R, S> Iterator for Samples<'a, R, S> where R: Read + Seek, S: Sample, {
+
     type Item = Result<S, FormatError>;
+
     fn next(&mut self) -> Option<Self::Item> {
         match self.format {
             #[cfg(feature = "flac")]
@@ -435,19 +409,13 @@ where
     }
 }
 
-impl<'a, R, F> Iterator for Frames<'a, R, F>
-where
-    R: std::io::Read + std::io::Seek,
-    F: dasp_frame::Frame,
-    F::Sample: Sample,
-{
+enum FrameConstruction { NotEnoughSamples, Ok, Err(FormatError), }
+
+impl<'a, R, F> Iterator for Frames<'a, R, F> where R: Read + Seek, F: dasp_frame::Frame, F::Sample: Sample, {
+
     type Item = Result<F, FormatError>;
+
     fn next(&mut self) -> Option<Self::Item> {
-        enum FrameConstruction {
-            NotEnoughSamples,
-            Ok,
-            Err(FormatError),
-        }
 
         let mut result = FrameConstruction::Ok;
         let frame = F::from_fn(|_| match self.samples.next() {
@@ -498,17 +466,14 @@ impl From<CafError> for FormatError {
     }
 }
 
-impl<T> From<T> for ReadError
-where
-    T: Into<FormatError>,
-{
+impl<T> From<T> for ReadError where T: Into<FormatError>, {
     fn from(err: T) -> Self {
         ReadError::Reader(err.into())
     }
 }
 
-impl From<std::io::Error> for ReadError {
-    fn from(err: std::io::Error) -> Self {
+impl From<Error> for ReadError {
+    fn from(err: Error) -> Self {
         ReadError::Io(err)
     }
 }
@@ -557,25 +522,29 @@ impl std::fmt::Display for ReadError {
 
 #[cfg(test)]
 mod tests {
-    #![cfg(all(feature = "flac", feature = "ogg_vorbis", feature = "wav"))]
 
     const FLAC: &'static str = "samples/sine_440hz_stereo.flac";
     const OGG_VORBIS: &'static str = "samples/sine_440hz_stereo.ogg";
     const WAV: &'static str = "samples/sine_440hz_stereo.wav";
 
+    use std::io::BufReader;
+    use std::path::Path;
+    use std::fs::File;
+
     #[test]
     fn read() {
-        let flac = std::io::BufReader::new(std::fs::File::open(FLAC).unwrap());
+
+        let flac = BufReader::new(File::open(FLAC).unwrap());
         match crate::Reader::new(flac).unwrap() {
             crate::Reader::Flac(_) => (),
             _ => panic!("Incorrect audio format"),
         }
-        let wav = std::io::BufReader::new(std::fs::File::open(WAV).unwrap());
+        let wav = BufReader::new(File::open(WAV).unwrap());
         match crate::Reader::new(wav).unwrap() {
             crate::Reader::Wav(_) => (),
             _ => panic!("Incorrect audio format"),
         }
-        let ogg_vorbis = std::io::BufReader::new(std::fs::File::open(OGG_VORBIS).unwrap());
+        let ogg_vorbis = BufReader::new(File::open(OGG_VORBIS).unwrap());
         match crate::Reader::new(ogg_vorbis).unwrap() {
             crate::Reader::OggVorbis(_) => (),
             _ => panic!("Incorrect audio format"),
@@ -600,10 +569,8 @@ mod tests {
 
     #[test]
     fn open_and_read_samples() {
-        fn read_samples<P>(path: P) -> usize
-        where
-            P: AsRef<std::path::Path>,
-        {
+
+        fn read_samples<P>(path: P) -> usize where P: AsRef<Path>, {
             let mut reader = crate::open(path).unwrap();
             reader.samples::<i16>().map(Result::unwrap).count()
         }
